@@ -1,0 +1,359 @@
+{
+ "job_id": "mock01",
+ "phase": "ready",
+ "error": null,
+ "collection": {
+  "kind": "album",
+  "title": "Os Mutantes",
+  "subtitle": "Os Mutantes",
+  "cover_url": "mocks/cover.svg",
+  "track_count": 11,
+  "truncated": false
+ },
+ "analysis": {
+  "done": 11,
+  "total": 11
+ },
+ "account": null,
+ "items": [
+  {
+   "index": 0,
+   "title": "Panis et Circenses",
+   "artists": [
+    "Os Mutantes"
+   ],
+   "duration_ms": 225412,
+   "skipped": false,
+   "match": {
+    "status": "MATCHED",
+    "score": 0.97,
+    "method": "album",
+    "deezer": {
+     "id": 70000,
+     "title": "Panis et Circenses",
+     "artist": "Os Mutantes",
+     "album": "Os Mutantes",
+     "duration_s": 225
+    },
+    "alternatives": []
+   },
+   "download": {
+    "state": "pending",
+    "progress": 0,
+    "quality": null,
+    "error": null
+   }
+  },
+  {
+   "index": 1,
+   "title": "A Minha Menina",
+   "artists": [
+    "Os Mutantes"
+   ],
+   "duration_ms": 284412,
+   "skipped": false,
+   "match": {
+    "status": "MATCHED",
+    "score": 0.97,
+    "method": "album",
+    "deezer": {
+     "id": 70001,
+     "title": "A Minha Menina",
+     "artist": "Os Mutantes",
+     "album": "Os Mutantes",
+     "duration_s": 284
+    },
+    "alternatives": []
+   },
+   "download": {
+    "state": "pending",
+    "progress": 0,
+    "quality": null,
+    "error": null
+   }
+  },
+  {
+   "index": 2,
+   "title": "O Relógio",
+   "artists": [
+    "Os Mutantes"
+   ],
+   "duration_ms": 213412,
+   "skipped": false,
+   "match": {
+    "status": "MATCHED",
+    "score": 0.97,
+    "method": "album",
+    "deezer": {
+     "id": 70002,
+     "title": "O Relógio",
+     "artist": "Os Mutantes",
+     "album": "Os Mutantes",
+     "duration_s": 213
+    },
+    "alternatives": []
+   },
+   "download": {
+    "state": "pending",
+    "progress": 0,
+    "quality": null,
+    "error": null
+   }
+  },
+  {
+   "index": 3,
+   "title": "Adeus Maria Fulô",
+   "artists": [
+    "Os Mutantes"
+   ],
+   "duration_ms": 179412,
+   "skipped": false,
+   "match": {
+    "status": "MATCHED",
+    "score": 0.97,
+    "method": "album",
+    "deezer": {
+     "id": 70003,
+     "title": "Adeus Maria Fulô",
+     "artist": "Os Mutantes",
+     "album": "Os Mutantes",
+     "duration_s": 179
+    },
+    "alternatives": []
+   },
+   "download": {
+    "state": "pending",
+    "progress": 0,
+    "quality": null,
+    "error": null
+   }
+  },
+  {
+   "index": 4,
+   "title": "Baby",
+   "artists": [
+    "Os Mutantes"
+   ],
+   "duration_ms": 180412,
+   "skipped": false,
+   "match": {
+    "status": "AMBIGUOUS",
+    "score": 0.71,
+    "method": "search",
+    "deezer": null,
+    "alternatives": [
+     {
+      "deezer": {
+       "id": 70004,
+       "title": "Baby",
+       "artist": "Os Mutantes",
+       "album": "Os Mutantes",
+       "duration_s": 180
+      },
+      "score": 0.71
+     },
+     {
+      "deezer": {
+       "id": 70900,
+       "title": "Baby (Ao Vivo)",
+       "artist": "Os Mutantes",
+       "album": "Tropicália 50 Anos (Ao Vivo)",
+       "duration_s": 203
+      },
+      "score": 0.66
+     },
+     {
+      "deezer": {
+       "id": 70901,
+       "title": "Baby",
+       "artist": "Gal Costa",
+       "album": "Gal Costa (1969)",
+       "duration_s": 214
+      },
+      "score": 0.52
+     }
+    ]
+   },
+   "download": {
+    "state": "pending",
+    "progress": 0,
+    "quality": null,
+    "error": null
+   }
+  },
+  {
+   "index": 5,
+   "title": "Senhor F",
+   "artists": [
+    "Os Mutantes"
+   ],
+   "duration_ms": 155412,
+   "skipped": false,
+   "match": {
+    "status": "MATCHED",
+    "score": 0.97,
+    "method": "album",
+    "deezer": {
+     "id": 70005,
+     "title": "Senhor F",
+     "artist": "Os Mutantes",
+     "album": "Os Mutantes",
+     "duration_s": 155
+    },
+    "alternatives": []
+   },
+   "download": {
+    "state": "pending",
+    "progress": 0,
+    "quality": null,
+    "error": null
+   }
+  },
+  {
+   "index": 6,
+   "title": "Bat Macumba",
+   "artists": [
+    "Os Mutantes"
+   ],
+   "duration_ms": 191412,
+   "skipped": false,
+   "match": {
+    "status": "MATCHED",
+    "score": 0.97,
+    "method": "album",
+    "deezer": {
+     "id": 70006,
+     "title": "Bat Macumba",
+     "artist": "Os Mutantes",
+     "album": "Os Mutantes",
+     "duration_s": 191
+    },
+    "alternatives": []
+   },
+   "download": {
+    "state": "pending",
+    "progress": 0,
+    "quality": null,
+    "error": null
+   }
+  },
+  {
+   "index": 7,
+   "title": "Le Premier Bonheur du Jour",
+   "artists": [
+    "Os Mutantes"
+   ],
+   "duration_ms": 179412,
+   "skipped": false,
+   "match": {
+    "status": "NOT_FOUND",
+    "score": 0.0,
+    "method": "search",
+    "deezer": null,
+    "alternatives": []
+   },
+   "download": {
+    "state": "pending",
+    "progress": 0,
+    "quality": null,
+    "error": null
+   }
+  },
+  {
+   "index": 8,
+   "title": "Trem Fantasma",
+   "artists": [
+    "Os Mutantes"
+   ],
+   "duration_ms": 186412,
+   "skipped": false,
+   "match": {
+    "status": "MATCHED",
+    "score": 0.97,
+    "method": "album",
+    "deezer": {
+     "id": 70008,
+     "title": "Trem Fantasma",
+     "artist": "Os Mutantes",
+     "album": "Os Mutantes",
+     "duration_s": 186
+    },
+    "alternatives": []
+   },
+   "download": {
+    "state": "pending",
+    "progress": 0,
+    "quality": null,
+    "error": null
+   }
+  },
+  {
+   "index": 9,
+   "title": "Tempo no Tempo",
+   "artists": [
+    "Os Mutantes"
+   ],
+   "duration_ms": 116412,
+   "skipped": false,
+   "match": {
+    "status": "MATCHED",
+    "score": 0.97,
+    "method": "album",
+    "deezer": {
+     "id": 70009,
+     "title": "Tempo no Tempo",
+     "artist": "Os Mutantes",
+     "album": "Os Mutantes",
+     "duration_s": 116
+    },
+    "alternatives": []
+   },
+   "download": {
+    "state": "pending",
+    "progress": 0,
+    "quality": null,
+    "error": null
+   }
+  },
+  {
+   "index": 10,
+   "title": "Ave Gengis Khan <script>alert('xss')</script>",
+   "artists": [
+    "Os Mutantes"
+   ],
+   "duration_ms": 223412,
+   "skipped": false,
+   "match": {
+    "status": "MATCHED",
+    "score": 0.97,
+    "method": "album",
+    "deezer": {
+     "id": 70010,
+     "title": "<img src=x onerror=alert(1)>Ave Gengis Khan",
+     "artist": "Os Mutantes",
+     "album": "Os Mutantes",
+     "duration_s": 223
+    },
+    "alternatives": []
+   },
+   "download": {
+    "state": "pending",
+    "progress": 0,
+    "quality": null,
+    "error": null
+   }
+  }
+ ],
+ "totals": {
+  "matched": 9,
+  "ambiguous": 1,
+  "not_found": 1,
+  "skipped": 0,
+  "queued": 0,
+  "downloading": 0,
+  "done": 0,
+  "failed": 0,
+  "cancelled": 0
+ },
+ "download_url": null
+}

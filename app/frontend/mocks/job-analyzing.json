@@ -1,0 +1,208 @@
+{
+ "job_id": "mock01",
+ "phase": "analyzing",
+ "error": null,
+ "collection": {
+  "kind": "album",
+  "title": "Os Mutantes",
+  "subtitle": "Os Mutantes",
+  "cover_url": "mocks/cover.svg",
+  "track_count": 11,
+  "truncated": false
+ },
+ "analysis": {
+  "done": 4,
+  "total": 11
+ },
+ "account": null,
+ "items": [
+  {
+   "index": 0,
+   "title": "Panis et Circenses",
+   "artists": [
+    "Os Mutantes"
+   ],
+   "duration_ms": 225412,
+   "skipped": false,
+   "match": null,
+   "download": {
+    "state": "pending",
+    "progress": 0,
+    "quality": null,
+    "error": null
+   }
+  },
+  {
+   "index": 1,
+   "title": "A Minha Menina",
+   "artists": [
+    "Os Mutantes"
+   ],
+   "duration_ms": 284412,
+   "skipped": false,
+   "match": null,
+   "download": {
+    "state": "pending",
+    "progress": 0,
+    "quality": null,
+    "error": null
+   }
+  },
+  {
+   "index": 2,
+   "title": "O Relógio",
+   "artists": [
+    "Os Mutantes"
+   ],
+   "duration_ms": 213412,
+   "skipped": false,
+   "match": null,
+   "download": {
+    "state": "pending",
+    "progress": 0,
+    "quality": null,
+    "error": null
+   }
+  },
+  {
+   "index": 3,
+   "title": "Adeus Maria Fulô",
+   "artists": [
+    "Os Mutantes"
+   ],
+   "duration_ms": 179412,
+   "skipped": false,
+   "match": null,
+   "download": {
+    "state": "pending",
+    "progress": 0,
+    "quality": null,
+    "error": null
+   }
+  },
+  {
+   "index": 4,
+   "title": "Baby",
+   "artists": [
+    "Os Mutantes"
+   ],
+   "duration_ms": 180412,
+   "skipped": false,
+   "match": null,
+   "download": {
+    "state": "pending",
+    "progress": 0,
+    "quality": null,
+    "error": null
+   }
+  },
+  {
+   "index": 5,
+   "title": "Senhor F",
+   "artists": [
+    "Os Mutantes"
+   ],
+   "duration_ms": 155412,
+   "skipped": false,
+   "match": null,
+   "download": {
+    "state": "pending",
+    "progress": 0,
+    "quality": null,
+    "error": null
+   }
+  },
+  {
+   "index": 6,
+   "title": "Bat Macumba",
+   "artists": [
+    "Os Mutantes"
+   ],
+   "duration_ms": 191412,
+   "skipped": false,
+   "match": null,
+   "download": {
+    "state": "pending",
+    "progress": 0,
+    "quality": null,
+    "error": null
+   }
+  },
+  {
+   "index": 7,
+   "title": "Le Premier Bonheur du Jour",
+   "artists": [
+    "Os Mutantes"
+   ],
+   "duration_ms": 179412,
+   "skipped": false,
+   "match": null,
+   "download": {
+    "state": "pending",
+    "progress": 0,
+    "quality": null,
+    "error": null
+   }
+  },
+  {
+   "index": 8,
+   "title": "Trem Fantasma",
+   "artists": [
+    "Os Mutantes"
+   ],
+   "duration_ms": 186412,
+   "skipped": false,
+   "match": null,
+   "download": {
+    "state": "pending",
+    "progress": 0,
+    "quality": null,
+    "error": null
+   }
+  },
+  {
+   "index": 9,
+   "title": "Tempo no Tempo",
+   "artists": [
+    "Os Mutantes"
+   ],
+   "duration_ms": 116412,
+   "skipped": false,
+   "match": null,
+   "download": {
+    "state": "pending",
+    "progress": 0,
+    "quality": null,
+    "error": null
+   }
+  },
+  {
+   "index": 10,
+   "title": "Ave Gengis Khan <script>alert('xss')</script>",
+   "artists": [
+    "Os Mutantes"
+   ],
+   "duration_ms": 223412,
+   "skipped": false,
+   "match": null,
+   "download": {
+    "state": "pending",
+    "progress": 0,
+    "quality": null,
+    "error": null
+   }
+  }
+ ],
+ "totals": {
+  "matched": 0,
+  "ambiguous": 0,
+  "not_found": 0,
+  "skipped": 0,
+  "queued": 0,
+  "downloading": 0,
+  "done": 0,
+  "failed": 0,
+  "cancelled": 0
+ },
+ "download_url": null
+}

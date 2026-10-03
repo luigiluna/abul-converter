@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 300" width="300" height="300">
+  <!-- Capa fictícia só para o modo ?mock (não é a capa real do álbum). -->
+  <rect width="300" height="300" fill="#f4a51c"/>
+  <circle cx="150" cy="170" r="150" fill="#e0306f"/>
+  <circle cx="150" cy="170" r="112" fill="#1d7a73"/>
+  <circle cx="150" cy="170" r="76" fill="#f4a51c"/>
+  <circle cx="150" cy="170" r="40" fill="#3a1140"/>
+  <path d="M0 60 C60 20 120 100 180 50 S280 30 300 70 V0 H0Z" fill="#3a1140"/>
+</svg>

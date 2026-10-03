@@ -316,7 +316,7 @@ musica.seudominio.duckdns.org {
 ```
 
 - O app **só é acessível pela rede interna do Docker**: o compose não publica a porta 8000. Por isso o header `X-Remote-User` é confiável.
-- Para adicionar um amigo: gerar o hash, acrescentar 1 linha e rodar `docker compose exec caddy caddy reload`.
+- Para adicionar um amigo: gerar o hash, acrescentar 1 linha e rodar `docker compose exec -w /etc/caddy caddy caddy reload`.
 - Limitações conhecidas: o prompt do navegador é feio e não há "logout" de verdade. Para 2–5 pessoas é aceitável. Se incomodar, troca-se por uma tela de login própria (contas em JSON + cookie de sessão) sem mexer no resto, porque o app só depende de "quem é o usuário".
 
 ### 7.2 CSRF
@@ -359,7 +359,7 @@ services:
   caddy:
     image: caddy:2
     ports: ["80:80", "443:443"]
-    volumes: ["./Caddyfile:/etc/caddy/Caddyfile", "caddy_data:/data"]
+    volumes: ["./deploy:/etc/caddy:ro", "caddy_data:/data"]
     restart: unless-stopped
 volumes: { caddy_data: {} }
 ```
@@ -369,7 +369,7 @@ volumes: { caddy_data: {} }
 2. Criar a VM A1. Se aparecer "Out of host capacity", tentar outro *availability domain* ou outro horário.
 3. Liberar as portas 80 e 443 **em dois lugares**: na *Security List* da VCN **e** no `iptables` da imagem Ubuntu da Oracle, que vem bloqueando tudo exceto SSH. Esse é o erro mais comum.
 4. Domínio grátis: um subdomínio **DuckDNS** apontando para o IP público, para o Caddy emitir o certificado.
-5. Instalar Docker; `git clone --recursive`; criar `.env` e `Caddyfile`; `docker compose up -d --build`.
+5. Instalar Docker; `git clone --recursive`; criar `.env` e `deploy/Caddyfile` (a partir do `.example`); `docker compose up -d --build`.
 6. **Smoke test antes de qualquer outra coisa:** baixar 1 track com o seu ARL **a partir da VM**. Isso valida o risco do IP de datacenter (§10).
 7. Atualizar: `git pull --recurse-submodules && docker compose up -d --build`.
 

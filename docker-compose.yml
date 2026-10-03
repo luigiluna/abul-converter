@@ -1,0 +1,38 @@
+# spot2deez: app (FastAPI) atrás do Caddy (HTTPS + basic auth). Ver docs/ARCHITECTURE.md §7.1 e §8.
+# Antes do primeiro "docker compose up -d --build":
+#   cp .env.example .env                            # preencha DEFAULT_ARL e APP_SECRET_KEY; chmod 600 .env
+#   cp deploy/Caddyfile.example deploy/Caddyfile    # domínio e usuários
+services:
+  app:
+    build: .
+    env_file: .env
+    environment:
+      # Sobrescreve o .env: um HOST/PORT/DATA_DIR de dev lá não quebra o container.
+      HOST: 0.0.0.0
+      PORT: "8000"
+      DATA_DIR: /data
+    volumes:
+      - ./data:/data
+    # Sem "ports:" de propósito: só o caddy alcança o app pela rede interna do Docker,
+    # e é isso que torna o header X-Remote-User confiável.
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    volumes:
+      # A pasta, não o arquivo: editores que recriam o arquivo deixariam um bind mount
+      # velho e o "caddy reload" continuaria com os usuários antigos.
+      - ./deploy:/etc/caddy:ro
+      - caddy_data:/data       # certificados (preserve: o Let's Encrypt tem limite de emissões)
+      - caddy_config:/config
+    restart: unless-stopped
+
+volumes:
+  caddy_data: {}
+  caddy_config: {}

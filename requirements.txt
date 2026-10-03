@@ -1,9 +1,12 @@
 # app
 requests>=2.31
 rapidfuzz>=3.6
+fastapi>=0.142
+uvicorn>=0.30
 # vendor/deezload
 deezer-py>=1.3.7
 pycryptodome>=3.20
 mutagen>=1.47
 # dev
 pytest>=8
+httpx2>=2.0  # required by fastapi.testclient (starlette >= 1.x; plain httpx is deprecated there)

@@ -7,3 +7,6 @@ __pycache__/
 /downloads/
 /data/
 .env
+
+# Caddyfile real (hashes de senha dos usuários); o versionado é deploy/Caddyfile.example
+/deploy/Caddyfile

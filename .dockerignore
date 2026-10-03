@@ -1,0 +1,34 @@
+# Secrets: injected at runtime by compose (env_file), never baked into the image.
+.env
+.env.*
+!.env.example
+deploy/Caddyfile
+
+# Local state and tooling
+.venv/
+venv/
+data/
+downloads/
+.git
+**/.git
+.gitignore
+.gitmodules
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.vscode/
+.idea/
+.claude/
+
+# Not needed at runtime
+tests/
+docs/
+skills/
+pytest.ini
+*.md
+/deezload/
+/deemix/
+Dockerfile
+docker-compose.yml

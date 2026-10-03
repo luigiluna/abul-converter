@@ -1,0 +1,8 @@
+{
+ "user": "luidi",
+ "quality": "FLAC",
+ "concurrency": 2,
+ "own_arl": false,
+ "default_arl_configured": true,
+ "max_concurrency": 3
+}
