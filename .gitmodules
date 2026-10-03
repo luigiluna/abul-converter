@@ -1,0 +1,3 @@
+[submodule "vendor/deezload"]
+	path = vendor/deezload
+	url = https://github.com/Lunatic16/deezload

@@ -1,0 +1,9 @@
+/deezload/
+/deemix/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+/downloads/
+/data/
+.env
