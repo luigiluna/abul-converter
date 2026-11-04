@@ -9,10 +9,14 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
+from Crypto.Protocol.KDF import bcrypt
+
 from app.backend import api as api_mod
+from app.backend import auth
 from app.backend import jobs as jobs_mod
 from app.backend import main as main_mod
 from app.backend.api import create_app
+from app.backend.auth import Accounts
 from app.backend.jobs import JobManager
 from app.backend.matching.cache import MatchCache
 from app.backend.settings import ConfigError, Settings
@@ -20,14 +24,22 @@ from app.backend.users import UserStore
 from tests.test_jobs import ARL, OWN_ARL, URL, FakeAdapter, FakeMatcher, FakeResolver, collection
 
 CSRF = {"X-Requested-With": "spot2deez"}
+PASSWORD = "senha-de-teste"
+# Fixed salt and the cheapest cost: the same hash (so the same sessions) in every test, fast.
+HASH = bcrypt(PASSWORD.encode(), 4, salt=b"0" * 16).decode()
+_accounts = None  # the Accounts of the app built by the last make()
+
+
+def cookie(user):
+    return {"Cookie": f"{auth.COOKIE}={_accounts.new_session(user)}"}
 
 
 def ana(**extra):
-    return {"X-Remote-User": "ana", **CSRF, **extra}
+    return {**cookie("ana"), **CSRF, **extra}
 
 
 def bia(**extra):
-    return {"X-Remote-User": "bia", **CSRF, **extra}
+    return {**cookie("bia"), **CSRF, **extra}
 
 
 @pytest.fixture
@@ -40,7 +52,12 @@ def make(tmp_path):
         users = UserStore(settings.data_dir / "users", "k", settings.max_user_concurrency)
         jm = JobManager(settings, users, adapter or FakeAdapter(), resolver or FakeResolver(collection()),
                         FakeMatcher(), MatchCache(settings.data_dir / "match_cache.json"))
-        app = create_app(settings, jobs=jm, frontend_dir=frontend_dir or tmp_path / "no-frontend")
+        global _accounts
+        _accounts = Accounts(settings.data_dir / "accounts.json", "k", cost=4)
+        _accounts.path.parent.mkdir(parents=True, exist_ok=True)
+        _accounts.path.write_text(json.dumps({"ana": HASH, "bia": HASH}), encoding="utf-8")
+        app = create_app(settings, jobs=jm, frontend_dir=frontend_dir or tmp_path / "no-frontend",
+                         accounts=_accounts)
         client = TestClient(app, raise_server_exceptions=raise_server_exceptions)
         client.__enter__()  # runs the lifespan (filter install + cleanup thread)
         clients.append(client)
@@ -85,21 +102,73 @@ def test_dev_user_in_dev(make):
     c = make(app_env="dev", dev_user="eu")
     r = c.get("/api/me")
     assert r.status_code == 200 and r.json()["user"] == "eu"
-    # an explicit header still wins
-    assert c.get("/api/me", headers={"X-Remote-User": "ana"}).json()["user"] == "ana"
+    # a real session still wins
+    assert c.get("/api/me", headers=cookie("ana")).json()["user"] == "ana"
 
 
-def test_username_lowercased_and_validated(make):
+def test_remote_user_header_is_not_trusted(make):
     c = make()
-    assert c.get("/api/me", headers={"X-Remote-User": "Ana"}).json()["user"] == "ana"
-    for bad in ("../x", "a b", "x" * 33, "é"):
-        r = c.get("/api/me", headers={"X-Remote-User": bad.encode("utf-8")})
-        assert r.status_code == 400, bad
+    forged = {"X-Remote-User": "ana"}  # what Caddy's basic auth used to send
+    assert c.get("/api/me", headers=forged).status_code == 401
+
+
+def test_login_sets_session_cookie(make):
+    c = make()
+    r = c.post("/api/login", json={"user": " Ana ", "password": PASSWORD}, headers=CSRF)
+    assert r.status_code == 200 and r.json()["user"] == "ana"
+    assert PASSWORD not in r.text and HASH not in r.text
+    flags = r.headers["set-cookie"].lower()
+    assert "httponly" in flags and "samesite=lax" in flags and "secure" in flags and "max-age=" in flags
+    token = r.cookies[auth.COOKIE]
+    c.cookies.clear()
+    assert c.get("/api/me", headers={"Cookie": f"{auth.COOKIE}={token}"}).json()["user"] == "ana"
+
+
+def test_login_refuses_bad_credentials(make):
+    c = make()
+    for body in ({"user": "ana", "password": "errada-errada"}, {"user": "zeca", "password": PASSWORD},
+                 {"user": "../x", "password": PASSWORD}, {"user": "ana"}, {"user": 5, "password": 5}, {}):
+        r = c.post("/api/login", json=body, headers=CSRF)
+        assert r.status_code == 401 and r.json()["error"], body
+        assert "set-cookie" not in r.headers
+    assert c.post("/api/login", json={"user": "ana", "password": PASSWORD}).status_code == 403  # CSRF
+
+
+def test_login_is_throttled(make):
+    c = make()
+    wrong = {"user": "ana", "password": "errada-errada"}
+    for _ in range(8):
+        assert c.post("/api/login", json=wrong, headers=CSRF).status_code == 401
+    r = c.post("/api/login", json={"user": "ana", "password": PASSWORD}, headers=CSRF)
+    assert r.status_code == 429 and "set-cookie" not in r.headers
+    # another address (as reported by Caddy) is not affected
+    r = c.post("/api/login", json={"user": "ana", "password": PASSWORD},
+               headers={**CSRF, "X-Forwarded-For": "203.0.113.9"})
+    assert r.status_code == 200
+
+
+def test_bad_session_is_401(make):
+    c = make()
+    good = _accounts.new_session("ana")
+    user, expires, mac = good.split(".")
+    for token in ("", "x", f"bia.{expires}.{mac}", f"{user}.{int(expires) + 1}.{mac}",
+                  _accounts.new_session("ana", now=time.time() - auth.SESSION_SECONDS - 5)):
+        assert c.get("/api/me", headers={"Cookie": f"{auth.COOKIE}={token}"}).status_code == 401, token
+    # changing the password ends the sessions issued before it
+    _accounts.set_password("ana", "outra-senha-nova")
+    assert c.get("/api/me", headers={"Cookie": f"{auth.COOKIE}={good}"}).status_code == 401
+
+
+def test_logout_clears_cookie(make):
+    c = make()
+    assert c.post("/api/logout", json={}, headers=CSRF).status_code == 401
+    r = c.post("/api/logout", json={}, headers=ana())
+    assert r.status_code == 200 and f'{auth.COOKIE}=""' in r.headers["set-cookie"]
 
 
 def test_csrf_header_required(make):
     c = make()
-    h = {"X-Remote-User": "ana"}
+    h = cookie("ana")
     assert c.post("/api/analyze", json={"url": URL}, headers=h).status_code == 403
     assert c.put("/api/me", json={"quality": "MP3_128"}, headers=h).status_code == 403
     assert c.post("/api/job/cancel", json={}, headers={**h, "X-Requested-With": "XMLHttpRequest"}).status_code == 403
@@ -188,7 +257,7 @@ def test_full_flow_to_file(make):
     assert snap["account"] == {"max_quality": "MP3_128", "using_own_arl": False}
     assert ARL not in json.dumps(snap)
 
-    r = c.get(snap["download_url"], headers={"X-Remote-User": "ana"})
+    r = c.get(snap["download_url"], headers=cookie("ana"))
     assert r.status_code == 200
     assert r.headers["content-disposition"].startswith("attachment")
     assert ".zip" in r.headers["content-disposition"]
@@ -214,7 +283,7 @@ def test_other_user_cannot_see_job(make):
                        ("/api/job/cancel", {})):
         r = c.post(path, json=body, headers=bia())
         assert r.status_code == 404 and r.json()["error"], path
-    assert c.get("/api/job/file", headers={"X-Remote-User": "ana"}).status_code == 200
+    assert c.get("/api/job/file", headers=cookie("ana")).status_code == 200
 
 
 def test_file_404_before_done(make):
@@ -286,6 +355,17 @@ def test_disk_full_is_400(make, monkeypatch):
     assert r.status_code == 400 and "espaço" in r.json()["error"]
 
 
+def test_delete_job_resets(make):
+    c = make()
+    assert c.delete("/api/job", headers=ana()).status_code == 204  # no job: still fine
+    ready(c)
+    assert c.delete("/api/job", headers=cookie("ana")).status_code == 403  # CSRF
+    assert c.delete("/api/job", headers=bia()).status_code == 204  # bia's own (empty) slot
+    assert c.get("/api/job", headers=ana()).status_code == 200
+    assert c.delete("/api/job", headers=ana()).status_code == 204
+    assert c.get("/api/job", headers=ana()).status_code == 204
+
+
 def test_cancel_without_job_is_404(make):
     c = make()
     assert c.post("/api/job/cancel", json={}, headers=ana()).status_code == 404
@@ -307,6 +387,28 @@ def test_unknown_api_route_is_json_404(make):
     assert r.status_code == 404 and "error" in r.json()
 
 
+# --- history ------------------------------------------------------------------
+
+def test_history_is_shared_and_has_only_metadata(make):
+    c = make()
+    assert c.get("/api/history", headers=bia()).json() == {"items": []}
+    job_id = ready(c)["job_id"]
+    c.post("/api/job/download", json={}, headers=ana())
+    poll(c, {"done"})
+
+    r = c.get("/api/history", headers=bia())  # another user sees what ana downloaded
+    assert r.status_code == 200
+    (entry,) = r.json()["items"]
+    assert set(entry) == {"user", "kind", "title", "subtitle", "cover_url", "url", "quality", "at"}
+    assert (entry["user"], entry["title"]) == ("ana", "Alb")
+    assert job_id not in r.text and ARL not in r.text
+    assert c.get("/api/job", headers=bia()).status_code == 204  # the job itself stays private
+
+
+def test_history_requires_user(make):
+    assert make().get("/api/history").status_code == 401
+
+
 # --- frontend -----------------------------------------------------------------
 
 def test_frontend_missing_does_not_break(make):
@@ -323,7 +425,9 @@ def test_frontend_served(make, tmp_path):
     (fe / "index.html").write_text("<!doctype html><title>spot2deez</title>", encoding="utf-8")
     (fe / "app.js").write_text("console.log(1)", encoding="utf-8")
     c = make(frontend_dir=fe)
-    r = c.get("/")
+    r = c.get("/", follow_redirects=False)  # not logged in: off to the login page
+    assert r.status_code == 303 and r.headers["location"] == "/login.html"
+    r = c.get("/", headers=cookie("ana"))
     assert r.status_code == 200 and "spot2deez" in r.text and r.headers["content-type"].startswith("text/html")
     assert c.get("/app.js").text == "console.log(1)"
     assert c.get("/missing.css").status_code == 404
@@ -336,7 +440,7 @@ def test_frontend_created_after_startup(make, tmp_path):
     fe.mkdir()
     (fe / "index.html").write_text("hi", encoding="utf-8")
     (fe / "app.js").write_text("x", encoding="utf-8")
-    assert c.get("/").text == "hi"
+    assert c.get("/", headers=cookie("ana")).text == "hi"
     assert c.get("/app.js").text == "x"
 
 

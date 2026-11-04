@@ -145,10 +145,11 @@ def test_full_flow_to_zip(tmp_path):
     assert [i["download"]["state"] for i in snap["items"]] == ["done", "done", "pending"]
     assert snap["totals"]["done"] == 2
     run = jm.adapter.runs[0]
-    assert (run.arl, run.quality, run.concurrency) == (ARL, "FLAC", 2)
+    assert (run.arl, run.quality, run.concurrency) == (ARL, "FLAC", 3)
 
     path = jm.file_for("ana")
     assert path.name == "Alb.zip"
+    assert not (path.parent / "files").exists()  # loose tracks are dropped once zipped
     with zipfile.ZipFile(path) as z:
         assert sorted(z.namelist()) == ["01 - 100.mp3", "02 - 201.mp3"]
         assert z.getinfo("01 - 100.mp3").compress_type == zipfile.ZIP_STORED
@@ -222,7 +223,7 @@ def test_no_arl(tmp_path):
 def test_own_arl_is_used(tmp_path):
     jm = make(tmp_path)
     jm.users.set_arl("ana", OWN_ARL)
-    jm.users.update("ana", quality="MP3_320", concurrency=3)
+    jm.users.update("ana", quality="MP3_320")
     ready(jm)
     jm.download("ana")
     snap = wait(jm, "ana", {"done"})
@@ -231,12 +232,13 @@ def test_own_arl_is_used(tmp_path):
     assert (run.arl, run.quality, run.concurrency) == (OWN_ARL, "MP3_320", 3)
 
 
-def test_concurrency_capped_by_server(tmp_path):
-    jm = make(tmp_path, max_user_concurrency=1)
+def test_concurrency_comes_from_server_not_user(tmp_path):
+    jm = make(tmp_path, max_user_concurrency=2)
+    jm.users.update("ana", concurrency=1)
     ready(jm)
     jm.download("ana")
     wait(jm, "ana", {"done"})
-    assert jm.adapter.runs[0].concurrency == 1
+    assert jm.adapter.runs[0].concurrency == 2
 
 
 def test_choose_validation(tmp_path):
@@ -292,6 +294,22 @@ def test_cancel_midway(tmp_path):
     assert not list((tmp_path / "data" / "jobs").rglob("*.mp3"))
     with pytest.raises(WrongPhase):
         jm.download("ana")
+
+
+def test_discard_forgets_job_and_files(tmp_path):
+    gate = threading.Event()
+    jm = make(tmp_path, adapter=FakeAdapter(gate=gate))
+    jm.discard("ana")  # nothing to forget: fine
+    ready(jm)
+    jm.download("ana")
+    wait(jm, "ana", {"downloading"})
+    with pytest.raises(Busy):
+        jm.discard("ana")
+    gate.set()
+    wait(jm, "ana", {"done"})
+    jm.discard("ana")
+    assert jm.snapshot("ana") is None and jm.file_for("ana") is None
+    assert not list((tmp_path / "data" / "jobs").iterdir())
 
 
 def test_cancel_during_ready(tmp_path):
@@ -356,6 +374,49 @@ def test_auth_error_becomes_error_phase_without_arl(tmp_path, caplog):
     assert "padrão" in snap["error"]
     assert ARL not in str(snap)
     assert ARL not in caplog.text
+
+
+def test_done_is_recorded_in_history(tmp_path):
+    jm = make(tmp_path)
+    ready(jm)
+    assert jm.history.recent() == []  # analysing is not downloading
+    jm.download("ana")
+    wait(jm, "ana", {"done"})
+    (entry,) = jm.history.recent()
+    assert (entry["user"], entry["kind"], entry["title"]) == ("ana", "album", "Alb")
+    assert entry["url"] == "https://open.spotify.com/album/x"
+    assert (tmp_path / "data" / "history.json").exists()
+
+
+def test_cancelled_and_failed_are_not_recorded(tmp_path):
+    gate = threading.Event()
+    jm = make(tmp_path, adapter=FakeAdapter(gate=gate))
+    ready(jm)
+    jm.choose("ana", 1, 101)
+    jm.download("ana")
+    wait(jm, "ana", {"downloading"})
+    jm.cancel("ana")
+    gate.set()
+    wait(jm, "ana", {"cancelled"})
+    assert jm.history.recent() == []
+
+    jm = make(tmp_path, adapter=FakeAdapter(auth_error=True))
+    ready(jm)
+    jm.download("ana")
+    wait(jm, "ana", {"error"})
+    assert jm.history.recent() == []
+
+
+def test_history_failure_does_not_break_the_job(tmp_path, monkeypatch):
+    jm = make(tmp_path)
+
+    def boom(user, collection, quality=None):
+        raise OSError("disk went away")
+    monkeypatch.setattr(jm.history, "add", boom)
+    ready(jm)
+    jm.download("ana")
+    assert wait(jm, "ana", {"done", "error"})["phase"] == "done"
+    assert jm.file_for("ana") is not None
 
 
 def test_spotify_errors(tmp_path):

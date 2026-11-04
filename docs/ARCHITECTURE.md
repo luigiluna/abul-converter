@@ -10,8 +10,8 @@
 
 ## 0. TL;DR
 
-- **Servidor web pequeno**: FastAPI (Python) + página HTML/JS sem build, atrás do **Caddy** (HTTPS automático + login). Tudo num `docker compose` com 2 containers numa VM ARM da Oracle. Sem Electron, sem fila externa, sem Redis.
-- **Login pelo Caddy (basic auth)**: o app não implementa senha, cadastro nem sessão. O Caddy autentica e repassa o nome do usuário ao app num header. Para 2–5 amigos isso basta (detalhes em §7).
+- **Servidor web pequeno**: FastAPI (Python) + página HTML/JS sem build, atrás do **Caddy** (HTTPS automático). Tudo num `docker compose` com 2 containers numa VM ARM da Oracle. Sem Electron, sem fila externa, sem Redis.
+- **Login próprio, mínimo**: tela de login, contas num JSON (hash bcrypt) e cookie de sessão assinado. Sem cadastro pela web: o dono cria as contas no servidor (detalhes em §7).
 - **Isolamento por usuário no backend**: cada job pertence a um usuário; a API só mostra e serve os jobs e arquivos de quem pediu.
 - **Entrega**: o servidor baixa para `/data/jobs/{job}/` e o usuário baixa a track avulsa ou o `.zip` (álbum/playlist). Os arquivos são apagados após algumas horas.
 - **Spotify só como fonte de metadados**, lido **anonimamente** das páginas `embed` + `oEmbed`. A Web API oficial não serve mais como base (§2–3). Playlists ficam **limitadas a 100 tracks no MVP**; o OAuth do Spotify entra na v2 (já previsto em §11).
@@ -122,12 +122,11 @@ Pelo embed, a lista de um álbum não traz o nome do álbum por track (está no 
 
 ```
 Browser (amigo / você)
-   │  HTTPS, basic auth
+   │  HTTPS, cookie de sessão
    ▼
-Caddy  ── TLS automático (Let's Encrypt), basic_auth com 1 usuário por pessoa,
-   │       repassa X-Remote-User: <nome>, remove qualquer X-Remote-User vindo de fora
+Caddy  ── TLS automático (Let's Encrypt); só repassa
    ▼  rede interna do docker (o app NÃO publica porta)
-FastAPI  ── app/backend/api.py  (rotas finas; usuário = header X-Remote-User)
+FastAPI  ── app/backend/api.py  (rotas finas; usuário = cookie de sessão, auth.py)
    │
    ├── spotify/resolver.py   URL → SpotifyCollection{meta, tracks: [TrackCandidate]}
    ├── matching/matcher.py   TrackCandidate → MatchResult{status, deezer_track, score, alternatives}
@@ -185,13 +184,13 @@ class TrackCandidate:
 - No fim do download, monta a entrega: 1 arquivo → serve direto; vários → `.zip` com `ZIP_STORED` (FLAC/MP3 já são comprimidos, então zip "sem compressão" é rápido e quase do mesmo tamanho).
 - **Limpeza:** uma thread apaga `jobs/<id>` com mais de `JOB_TTL_HOURS` (padrão 6); no startup apaga tudo. Recusa novos downloads se o disco livre ficar abaixo de `MIN_FREE_GB`.
 
-**`frontend/`**: `index.html` + `app.js` + `style.css`, servidos como estáticos pelo FastAPI. Sem framework e sem build. Não há tela de login (o navegador mostra o prompt do basic auth).
+**`frontend/`**: `index.html` + `app.js` + `style.css`, servidos como estáticos pelo FastAPI. Sem framework e sem build. A tela de login é `login.html` + `login.js`, com o mesmo `style.css`.
 
 ### 4.2 API HTTP
 
 Resumo abaixo; **o contrato detalhado (corpos, erros, schema do snapshot) está em [IMPLEMENTATION_PLAN.md §4](IMPLEMENTATION_PLAN.md) e prevalece**.
 
-Todas as rotas exigem o header `X-Remote-User` (injetado pelo Caddy). Todo POST/PUT exige `X-Requested-With: spot2deez` (§7).
+Todas as rotas exigem o cookie de sessão (menos `POST /api/login`). Todo POST/PUT exige `X-Requested-With: spot2deez` (§7).
 
 | Método | Rota | Corpo / Resposta |
 |---|---|---|
@@ -300,28 +299,26 @@ Os limiares são calibrados com um conjunto de testes fixo ([IMPLEMENTATION_PLAN
 
 ## 7. Autenticação, segredos e segurança
 
-### 7.1 Login via Caddy
+### 7.1 Login do app
+
+Desde 2026-10-03 (pedido do dono) o login é do próprio app, em `app/backend/auth.py`; o Caddy só faz HTTPS:
 
 ```caddyfile
 musica.seudominio.duckdns.org {
-    basic_auth {
-        voce  $2a$14$...hash...     # gerado com: docker compose exec caddy caddy hash-password
-        amigo $2a$14$...hash...
-    }
-    request_header -X-Remote-User                 # descarta qualquer valor vindo do cliente
-    reverse_proxy app:8000 {
-        header_up X-Remote-User {http.auth.user.id}
-    }
+    reverse_proxy app:8000
 }
 ```
 
-- O app **só é acessível pela rede interna do Docker**: o compose não publica a porta 8000. Por isso o header `X-Remote-User` é confiável.
-- Para adicionar um amigo: gerar o hash, acrescentar 1 linha e rodar `docker compose exec -w /etc/caddy caddy caddy reload`.
-- Limitações conhecidas: o prompt do navegador é feio e não há "logout" de verdade. Para 2–5 pessoas é aceitável. Se incomodar, troca-se por uma tela de login própria (contas em JSON + cookie de sessão) sem mexer no resto, porque o app só depende de "quem é o usuário".
+- **Contas:** `data/accounts.json` (`{"usuario": "<hash bcrypt>"}`). Não há cadastro pela web: o dono cria o login ou troca a senha no servidor com `docker compose exec -u app app python -m app.passwd <usuario>` (a senha é digitada no prompt). Hashes `$2a$`/`$2b$`/`$2y$` são aceitos, então os que estavam no `Caddyfile` foram migrados sem trocar senha. O bcrypt vem do `pycryptodome`, que já era dependência.
+- **Tela:** `login.html` + `login.js` (públicos, como os outros estáticos). `GET /` sem sessão redireciona para lá; a API responde `401` e o `app.js` volta para o login.
+- **Sessão:** `POST /api/login` devolve o cookie `spot2deez_session` (`HttpOnly`, `SameSite=Lax`, `Secure` em prod, 30 dias) com `usuario.expira.hmac`. O HMAC usa uma chave derivada da `APP_SECRET_KEY` e inclui o hash da senha: trocar a senha ou remover a conta encerra as sessões, sem guardar estado de sessão no servidor. `POST /api/logout` apaga o cookie.
+- **Força bruta:** 8 senhas erradas em 5 minutos por IP (o `X-Forwarded-For` posto pelo Caddy) → `429`. Uma verificação de bcrypt por vez (1 OCPU); usuário inexistente custa o mesmo tempo que senha errada.
+- O header `X-Remote-User` **não é mais lido** pelo app. A porta 8000 continua sem ser publicada, para que o cookie `Secure` e o `X-Forwarded-For` valham.
+- Em `APP_ENV=dev`, `DEV_USER` continua valendo quando não há sessão.
 
 ### 7.2 CSRF
 
-O navegador reenvia as credenciais do basic auth automaticamente, inclusive em requisições disparadas por outros sites. Por isso **todo POST/PUT exige o header `X-Requested-With: spot2deez`**. Um site de terceiros não consegue enviar esse header sem preflight CORS, e o app não responde ao preflight. `GET /api/job/file` só lê dados do próprio usuário, então não precisa disso.
+O navegador reenvia o cookie de sessão sozinho (o `SameSite=Lax` já barra POST vindo de outro site; o header é a segunda trava). Por isso **todo POST/PUT exige o header `X-Requested-With: spot2deez`**. Um site de terceiros não consegue enviar esse header sem preflight CORS, e o app não responde ao preflight. `GET /api/job/file` só lê dados do próprio usuário, então não precisa disso.
 
 ### 7.3 Segredos
 
@@ -330,7 +327,7 @@ O navegador reenvia as credenciais do basic auth automaticamente, inclusive em r
 | `DEFAULT_ARL` (o seu) | `.env` no servidor (`chmod 600`), fora do git | frontend, log, `/data` |
 | ARL próprio de cada usuário | `/data/users/<user>.json`, criptografado com AES-GCM | frontend (só `own_arl: bool`), log |
 | `APP_SECRET_KEY` (32 bytes aleatórios) | `.env` | git |
-| Senhas | só o hash bcrypt no `Caddyfile` | — |
+| Senhas | só o hash bcrypt em `/data/accounts.json` | frontend, log |
 
 Um `logging.Filter` mascara qualquer ARL conhecido que apareça numa mensagem de log.
 
@@ -387,8 +384,8 @@ volumes: { caddy_data: {} }
 | D4 | Matcher próprio com score e 3 estados | O fallback do Deemix escolhe `data[0]` às cegas | Portar `get_track_id_from_metadata` |
 | D5 | Deezload via import + monkeypatch de `log`; 1 `DeezerDownloader` por ARL | Progresso, cancelamento e um login por conta | Subprocess; fork |
 | D6 | Deezload como submódulo | Repo sem LICENSE; update fácil | Copiar o arquivo |
-| D7 | **Auth no Caddy (basic auth) + header** | Zero código de senha, sessão ou cadastro no app; o HTTPS já vem junto | Login próprio (fica para quando houver mais usuários) |
-| D8 | **Sem banco**: JSON por usuário + jobs em memória | 2–5 usuários, sem histórico | SQLite (entra se surgir histórico ou login próprio) |
+| D7 | **Login próprio: contas em JSON + cookie assinado** (trocado em 2026-10-03; antes era basic auth no Caddy) | O dono quis tela de login e logout; sem estado de sessão, sem cadastro e sem dependência nova | Basic auth no Caddy (prompt do navegador, sem logout); biblioteca de sessão/usuários |
+| D8 | **Sem banco**: JSON por usuário + jobs em memória | 2–5 usuários; o histórico compartilhado (T8) são 50 entradas num JSON | SQLite (entra se o histórico crescer ou surgir login próprio) |
 | D9 | **Entrega por download (arquivo/zip) + TTL** | Pouco disco; cada um guarda no próprio dispositivo | Biblioteca compartilhada + Navidrome |
 | D10 | **ARL padrão do dono + ARL próprio opcional** | Prático para começar; cada amigo pode usar a própria conta | Só ARL próprio; só o ARL do dono |
 | D11 | Docker Compose (app + Caddy) | Agora há servidor: deploy e update viram 1 comando | systemd + venv (dá, mas o Caddy e o update ficam manuais) |
@@ -426,7 +423,7 @@ volumes: { caddy_data: {} }
 - Limites do Dev Mode: o dono do app precisa ter **Premium**; até **5 usuários** cadastrados manualmente no dashboard do Spotify; só retorna itens de playlists **próprias ou colaborativas**. Para uma playlist de terceiros, o usuário a copia para a conta dele.
 - **Impacto no MVP:** nenhum. O `SpotifyResolver` já é uma interface com `resolve(url)`; a v2 acrescenta uma segunda implementação (`WebApiSource`) usada quando o usuário tem o Spotify conectado e o embed veio truncado. `TrackCandidate` não muda (de quebra, `album` passa a vir preenchido em playlists).
 
-Outros itens de v2: velocidade em bytes/s, PR upstream no Deezload (`logger`), login próprio no lugar do basic auth, opção "salvar numa biblioteca do servidor".
+Outros itens de v2: velocidade em bytes/s, PR upstream no Deezload (`logger`), opção "salvar numa biblioteca do servidor".
 
 ---
 
@@ -442,12 +439,12 @@ Outros itens de v2: velocidade em bytes/s, PR upstream no Deezload (`logger`), l
 
 5. **Match de álbum inteiro** fica no MVP; é removido se o golden set mostrar que não agrega.
 
-6. **Basic auth no Caddy parece "gambiarra"?** Não para 2–5 pessoas conhecidas: é HTTPS + bcrypt mantidos pelo Caddy, com zero código de autenticação nosso, que é justamente onde se costuma errar. O custo é a UX (prompt do navegador, sem logout). O app depende só de `X-Remote-User`, então trocar depois é barato. **O ponto crítico é o app nunca ficar exposto sem o Caddy na frente.** O compose não publica a porta 8000, e há um teste que garante que a API rejeita requisições sem o header.
+6. **Basic auth no Caddy** foi a escolha inicial (zero código de autenticação nosso) e valeu até o deploy. O custo era a UX (prompt do navegador, sem logout), e em 2026-10-03 o dono pediu a tela de login: ver §7.1. O código novo é pequeno (`auth.py`) e coberto por testes (sessão forjada, expirada, revogada, força bruta). O compose continua sem publicar a porta 8000.
 
 7. **Por que não SQLite agora?** Os dados persistentes são "preferências de 2 pessoas" e um cache. JSON + lock resolve. SQLite entra se aparecer histórico de downloads ou login próprio.
 
 8. **O maior risco deixou de ser técnico e virou operacional:** o IP da Oracle e a conta Deezer do dono. Por isso o plano tem um **smoke test do Deezload na VM logo na etapa 0**, antes de investir no resto. Se o Deezer bloquear o IP, o plano B (mesmo compose em casa + túnel) já fica descrito.
 
-9. **Docker passou de "evitar" para "usar"**, porque agora existe servidor. Ele continua não sendo obrigatório para desenvolver: localmente, `uvicorn` + um header `X-Remote-User` fixo via variável `DEV_USER` (que só funciona com `APP_ENV=dev`).
+9. **Docker passou de "evitar" para "usar"**, porque agora existe servidor. Ele continua não sendo obrigatório para desenvolver: localmente, `uvicorn` + um usuário fixo via variável `DEV_USER` (que só funciona com `APP_ENV=dev`).
 
 10. **O que fica de fora de propósito:** artistas/discografias, URLs do Deezer, busca livre, histórico, múltiplos jobs por usuário, painel de admin e edição de tags.

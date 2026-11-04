@@ -1,7 +1,7 @@
 """HTTP API (FastAPI): thin routes over JobManager and UserStore.
 
-Who the user is comes from X-Remote-User, set by Caddy after basic auth (the
-app port is never published, so the header is trusted). Mutating requests need
+Who the user is comes from the session cookie issued by POST /api/login (see
+auth.py); Caddy in front only does HTTPS. Mutating requests need
 X-Requested-With: spot2deez, which a third-party site cannot send without a
 CORS preflight that we never answer. Errors are always {"error": "<safe text>"}.
 """
@@ -13,16 +13,17 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.backend import secrets_filter
+from app.backend import auth, secrets_filter
+from app.backend.auth import Accounts, Throttle
 from app.backend.jobs import Busy, DiskFull, JobManager, NoArl, NoJob, WrongPhase
 from app.backend.settings import ROOT, Settings, get_settings
 from app.backend.spotify.resolver import SpotifyError
-from app.backend.users import UserStore, valid_username
+from app.backend.users import UserStore
 
 FRONTEND_DIR = ROOT / "app" / "frontend"
 CSRF_HEADER, CSRF_VALUE = "x-requested-with", "spot2deez"
@@ -67,7 +68,8 @@ def _build_jobs(settings: Settings, users: UserStore) -> JobManager:
 
 
 def create_app(settings: Settings | None = None, users: UserStore | None = None,
-               jobs: JobManager | None = None, frontend_dir: Path | None = None) -> FastAPI:
+               jobs: JobManager | None = None, frontend_dir: Path | None = None,
+               accounts: Accounts | None = None) -> FastAPI:
     """Build the app. Anything not injected is built from get_settings() (ConfigError propagates)."""
     settings = settings or get_settings()
     if users is None:
@@ -75,6 +77,8 @@ def create_app(settings: Settings | None = None, users: UserStore | None = None,
                                                   settings.max_user_concurrency)
     jobs = jobs or _build_jobs(settings, users)
     frontend_dir = Path(frontend_dir or FRONTEND_DIR)
+    accounts = accounts or Accounts(Path(settings.data_dir) / "accounts.json", settings.secret_key)
+    throttle = Throttle()
 
     # ARLs that must never reach a log: the default plus any received via PUT /api/me.
     secrets: set[str] = {settings.default_arl} if settings.default_arl else set()
@@ -91,21 +95,23 @@ def create_app(settings: Settings | None = None, users: UserStore | None = None,
 
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.settings, app.state.users, app.state.jobs, app.state.secrets = settings, users, jobs, secrets
+    app.state.accounts = accounts
 
     # --- middleware: identity + CSRF -----------------------------------------
+
+    def identify(request: Request) -> str | None:
+        user = accounts.session_user(request.cookies.get(auth.COOKIE))
+        if not user and settings.app_env == "dev":
+            user = settings.dev_user
+        return user
 
     @app.middleware("http")
     async def identity_and_csrf(request: Request, call_next):
         if not request.url.path.startswith("/api/"):
             return await call_next(request)
-        user = (request.headers.get("x-remote-user") or "").strip()
-        if not user and settings.app_env == "dev" and settings.dev_user:
-            user = settings.dev_user
-        if not user:
+        user = identify(request)
+        if not user and request.url.path != "/api/login":
             return error(401, "Não autenticado.")
-        user = user.lower()
-        if not valid_username(user):
-            return error(400, "Nome de usuário inválido.")
         if request.method in MUTATING and request.headers.get(CSRF_HEADER) != CSRF_VALUE:
             return error(403, "Requisição recusada (falta X-Requested-With).")
         request.state.user = user
@@ -168,6 +174,29 @@ def create_app(settings: Settings | None = None, users: UserStore | None = None,
 
     # --- routes --------------------------------------------------------------
 
+    @app.post("/api/login")
+    async def login(request: Request):
+        data = await body(request)
+        user, password = data.get("user"), data.get("password")
+        # Caddy overwrites X-Forwarded-For with the address it saw, so it can be trusted.
+        ip = request.headers.get("x-forwarded-for", "").split(",")[-1].strip() or request.client.host
+        if throttle.blocked(ip):
+            raise ApiError(429, "Muitas tentativas. Espere alguns minutos e tente de novo.")
+        user = user.strip().lower() if isinstance(user, str) else ""
+        if not isinstance(password, str) or not await run_in_threadpool(accounts.verify, user, password):
+            throttle.fail(ip)
+            raise ApiError(401, "Usuário ou senha incorretos.")
+        response = JSONResponse(me(user))
+        response.set_cookie(auth.COOKIE, accounts.new_session(user), max_age=auth.SESSION_SECONDS,
+                            httponly=True, samesite="lax", secure=settings.app_env == "prod")
+        return response
+
+    @app.post("/api/logout")
+    async def logout(request: Request):
+        response = JSONResponse({})
+        response.delete_cookie(auth.COOKIE)
+        return response
+
     @app.get("/api/me")
     async def get_me(request: Request):
         return me(request.state.user)
@@ -200,6 +229,11 @@ def create_app(settings: Settings | None = None, users: UserStore | None = None,
         snap = jobs.snapshot(request.state.user)
         return snap if snap is not None else Response(status_code=204)
 
+    @app.delete("/api/job")
+    async def discard_job(request: Request):
+        jobs.discard(request.state.user)
+        return Response(status_code=204)
+
     @app.post("/api/job/items/{index}/choose")
     async def choose(index: int, request: Request):
         data = await body(request)
@@ -230,13 +264,20 @@ def create_app(settings: Settings | None = None, users: UserStore | None = None,
             raise ApiError(404, "Nenhum arquivo pronto.")
         return FileResponse(path, filename=path.name, content_disposition_type="attachment")
 
+    @app.get("/api/history")
+    async def history(request: Request):
+        # Shared on purpose: what everyone downloaded (collection metadata only).
+        return {"items": jobs.history.recent()}
+
     # --- frontend ------------------------------------------------------------
 
     @app.get("/", include_in_schema=False)
-    async def index():
+    async def index(request: Request):
         page = frontend_dir / "index.html"
         if not page.is_file():
             return error(404, "Frontend ainda não instalado (app/frontend/index.html).")
+        if not identify(request):
+            return RedirectResponse("/login.html", status_code=303)
         return FileResponse(page, headers={"Cache-Control": "no-cache"})
 
     app.mount("/", _Frontend(directory=frontend_dir, check_dir=False), name="frontend")

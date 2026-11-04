@@ -45,6 +45,9 @@ deezload._QUIET = True
 
 QUALITIES = {q.value: q for q in deezload.AudioQuality}
 ORDER = ["FLAC", "MP3_320", "MP3_128"]  # best first
+# A pooled login idle for longer than this is dropped and done again: Deezer lets a
+# session go stale after some days, and a stale one refuses every track (2026-10-27).
+SESSION_IDLE_SECONDS = 3600
 
 
 class AuthError(Exception):
@@ -85,18 +88,24 @@ class AccountInfo:
 
 
 class DeezloadAdapter:
-    def __init__(self, max_parallel: int = 4, max_retries: int = 3, fetch_lyrics: bool = True):
+    def __init__(self, max_parallel: int = 4, max_retries: int = 3, fetch_lyrics: bool = True,
+                 clock: Callable[[], float] = time.monotonic):
         self._slots = threading.BoundedSemaphore(max_parallel)
         self._max_retries = max_retries
         self._fetch_lyrics = fetch_lyrics
-        self._pool: dict[tuple[str, str], deezload.DeezerDownloader] = {}
+        self._clock = clock
+        # (sha256(arl), quality) -> (downloader, last time it was handed out)
+        self._pool: dict[tuple[str, str], tuple[deezload.DeezerDownloader, float]] = {}
         self._pool_lock = threading.Lock()
 
     def _downloader(self, arl: str, quality: str) -> "deezload.DeezerDownloader":
         # Quality lives on the instance, so instances are keyed by (ARL, quality).
         key = (hashlib.sha256(arl.encode()).hexdigest(), quality)
         with self._pool_lock:
-            dl = self._pool.get(key)
+            now = self._clock()
+            dl, last_used = self._pool.get(key, (None, now))
+            if dl is not None and now - last_used > SESSION_IDLE_SECONDS:
+                dl = None  # a run still holding the old instance keeps using it
             if dl is None:
                 dl = deezload.DeezerDownloader(
                     arl, quality=QUALITIES[quality], max_retries=self._max_retries,
@@ -105,7 +114,7 @@ class DeezloadAdapter:
                 if not dl.authenticate():
                     raise AuthError(getattr(_tls, "last_error", None)
                                     or "Deezer login failed; the ARL may be invalid or expired.")
-                self._pool[key] = dl
+            self._pool[key] = (dl, now)
             return dl
 
     def account_info(self, arl: str) -> AccountInfo:

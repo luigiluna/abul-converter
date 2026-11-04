@@ -9,18 +9,21 @@ const ACTIVE = new Set(["analyzing", "downloading", "packaging"]);
 const QUALITY_RANK = { MP3_128: 1, MP3: 1, MP3_320: 2, FLAC: 3 };
 const QUALITY_LABEL = { FLAC: "FLAC", MP3_320: "MP3 320", MP3_128: "MP3 128", MP3: "MP3" };
 const KIND_LABEL = { track: "Música", album: "Álbum", playlist: "Playlist" };
-const STATUS = {
-  MATCHED:   { sym: "✓", cls: "g-ok",  label: "encontrada no Deezer" },
-  AMBIGUOUS: { sym: "!", cls: "g-amb", label: "mais de uma opção, escolha uma" },
-  NOT_FOUND: { sym: "✕", cls: "g-nf",  label: "não encontrada no Deezer" },
-};
 const DL_LABEL = {
   queued: "Na fila", downloading: "Baixando", done: "Baixada",
   failed: "Falhou", cancelled: "Cancelada",
 };
 
 const $ = (id) => document.getElementById(id);
-const state = { me: null, job: null, timer: 0, lastCover: null, lastStatus: new Map() };
+const HISTORY_SHOWN = 20;
+const HISTORY_SEEN_KEY = "spot2deez.historySeen";const state = { me: null, job: null, timer: 0, lastCover: null, busy: false, historyFor: null };
+
+$("theme").value = document.documentElement.dataset.theme || "system";
+$("theme").addEventListener("change", (event) => {
+  const value = event.target.value;
+  document.documentElement.dataset.theme = value;
+  try { localStorage.setItem("spot2deez-theme", value); } catch {}
+});
 
 /* ---------------- HTTP ---------------- */
 
@@ -46,6 +49,8 @@ async function api(method, path, body) {
   let data = null;
   try { data = await res.json(); } catch { /* corpo vazio ou não-JSON */ }
   if (!res.ok) {
+    // sessão expirou (ou saiu em outra aba): volta para o login
+    if (res.status === 401) location.replace("/login.html");
     const msg = data && typeof data.error === "string" ? data.error : `O servidor respondeu ${res.status}.`;
     throw new ApiError(res.status, msg);
   }
@@ -89,7 +94,9 @@ async function refresh() {
 }
 
 async function act(method, path, body, button) {
-  if (button) button.disabled = true;
+  if (state.busy) return false;
+  state.busy = true;
+  if (button) { button.disabled = true; button.setAttribute("aria-busy", "true"); }
   showError($("form-error"), "");
   try {
     const snap = await api(method, path, body);
@@ -107,7 +114,9 @@ async function act(method, path, body, button) {
     render();
     return false;
   } finally {
-    if (button && button.isConnected) button.disabled = false;
+    state.busy = false;
+    if (button && button.isConnected) { button.disabled = false; button.removeAttribute("aria-busy"); }
+    render();
   }
 }
 
@@ -116,11 +125,21 @@ async function act(method, path, body, button) {
 function render() {
   const job = state.job;
   const has = !!job;
+  const active = !!job && ACTIVE.has(job.phase);
+  $("analyze").disabled = state.busy || active;
+  $("analyze").textContent = job?.phase === "analyzing" ? "Analisando…" : "Analisar";
+  $("analyze").setAttribute("aria-busy", String(state.busy || job?.phase === "analyzing"));
+  $("url").disabled = active;
+  $("dock").dataset.phase = job?.phase || "none";
+  document.body.classList.toggle("is-busy", active);
+  if (!has) document.title = "Abul Converter";
   $("intro").hidden = has;
   $("sleeve").hidden = !has;
   $("lista").hidden = !has || !job.items || job.items.length === 0;
   $("dock").hidden = !has;
   if (!has) return;
+  // um download que acabou de terminar entra na lista de todos
+  if (job.phase === "done" && state.historyFor !== job.job_id) loadHistory(job.job_id);
 
   renderCollection(job);
   renderPhase(job);
@@ -132,6 +151,9 @@ function renderCollection(job) {
   const c = job.collection;
   $("col-kind").hidden = !c;
   if (!c) {
+    $("cover").hidden = true;
+    $("cover").removeAttribute("src");
+    state.lastCover = null;
     $("col-title").textContent = "Lendo o link…";
     $("col-sub").textContent = "";
     $("truncated").hidden = true;
@@ -150,13 +172,13 @@ function renderCollection(job) {
     state.lastCover = c.cover_url;
     const img = $("cover");
     if (c.cover_url) {
-      img.crossOrigin = "anonymous";
-      img.onload = () => tintFrom(img);
-      img.onerror = () => { img.removeAttribute("src"); resetTint(); };
+      img.hidden = true;
+      img.onload = () => { img.hidden = false; };
+      img.onerror = () => { img.hidden = true; img.removeAttribute("src"); };
       img.src = c.cover_url;
     } else {
       img.removeAttribute("src");
-      resetTint();
+      img.hidden = true;
     }
   }
 }
@@ -164,7 +186,7 @@ function renderCollection(job) {
 function renderPhase(job) {
   const t = job.totals || {};
   const a = job.analysis || { done: 0, total: 0 };
-  const melt = $("meter");
+  const meter = $("meter");
   let text = "";
   let pct = null;
   switch (job.phase) {
@@ -192,71 +214,87 @@ function renderPhase(job) {
     }
     case "packaging": text = "Juntando tudo num arquivo…"; pct = 100; break;
     case "done": text = "Pronto. O arquivo está esperando por você."; break;
-    case "cancelled": text = "Download cancelado. Nada foi guardado."; break;
+    case "cancelled": text = "Download cancelado."; break;
     case "error": text = "Algo deu errado."; break;
   }
   $("phase-text").textContent = text;
-  melt.hidden = pct == null;
+  meter.hidden = pct == null;
+  let prefix = job.phase === "done" ? "Pronto · " : "";
   if (pct != null) {
     const v = Math.max(0, Math.min(100, Math.round(pct)));
     $("meter-fill").style.width = v + "%";
-    melt.setAttribute("aria-valuenow", String(v));
+    meter.setAttribute("aria-valuenow", String(v));
+    prefix = v + "% · ";
   }
+  // o andamento aparece na aba, para quem deixa o download rodando em segundo plano
+  document.title = prefix + "Abul Converter";
   showError($("job-error"), job.phase === "error" ? job.error || "Erro sem detalhes." : "");
-  $("sleeve").classList.toggle("spin", job.phase === "downloading" || job.phase === "packaging");
 }
 
 function renderItems(job) {
   const list = $("track-list");
-  const canChoose = job.phase === "ready";
-  const rows = (job.items || []).map((it) => renderItem(it, canChoose, job.phase));
-  list.replaceChildren(...rows);
+  // Preserve disclosures and keyboard focus across polling updates.
+  const open = new Set([...list.querySelectorAll("details[open]")].map((node) => node.closest("li").id));
+  const focused = document.activeElement;
+  const focusedRow = focused?.closest(".track");
+  const wasSummary = focused?.tagName === "SUMMARY";
+  list.replaceChildren(...(job.items || []).map((it) => renderItem(it, job.phase === "ready", job.phase)));
+  for (const id of open) $(id)?.querySelector("details")?.setAttribute("open", "");
+  if (focusedRow) {
+    const row = $(focusedRow.id);
+    (wasSummary ? row?.querySelector("summary") : row)?.focus({ preventScroll: true });
+  }
 }
 
 function renderItem(it, canChoose, phase) {
   const li = el("li", "track");
-  li.id = `t${it.index}`;
+  li.id = "t" + it.index;
   li.tabIndex = -1;
-  const m = it.match;
-  const st = m ? STATUS[m.status] : null;
-
-  // glifo de estado: símbolo + rótulo acessível (nunca só cor)
-  const g = el("span", "glyph");
-  g.setAttribute("role", "img");
-  let key;
-  if (it.skipped) {
-    g.classList.add("g-skip"); g.textContent = "–"; g.setAttribute("aria-label", "pulada"); key = "skip";
-  } else if (st) {
-    g.classList.add(st.cls); g.textContent = st.sym; g.setAttribute("aria-label", st.label); key = m.status;
-  } else {
-    g.classList.add("g-wait"); g.textContent = "…"; g.setAttribute("aria-label", "aguardando análise"); key = "wait";
-  }
-  const prev = state.lastStatus.get(it.index);
-  if (prev && prev !== key) g.classList.add("changed");
-  state.lastStatus.set(it.index, key);
   li.classList.toggle("is-skipped", !!it.skipped);
-  li.append(g);
-
-  // linha do Spotify
-  const main = el("p", "t-main");
-  const artists = (it.artists || []).join(", ");
-  if (artists) main.append(el("span", "t-artist", artists), " — ");
-  main.append(el("span", "t-title", it.title || "Sem título"));
-  li.append(main, el("span", "t-dur", fmtDur((it.duration_ms || 0) / 1000)));
-
-  // destino no Deezer
-  if (m && m.deezer) {
-    li.append(destLine(m.deezer));
-  } else if (m && m.status === "NOT_FOUND") {
-    li.append(el("p", "t-dest none", "Nenhuma versão confiável no Deezer; fica de fora."));
-  } else if (m && m.status === "AMBIGUOUS" && !canChoose) {
-    li.append(el("p", "t-dest", "Ficou sem escolha; não será baixada."));
+  const m = it.match;
+  const d = it.download || {};
+  const downloading = d.state && d.state !== "pending" && phase !== "ready";
+  const main = el("div", "t-main");
+  main.append(el("span", "t-title", it.title || "Sem título"), el("span", "t-artist", (it.artists || []).join(", ")));
+  const number = el("span", "track-number", String(it.index + 1).padStart(2, "0"));
+  number.setAttribute("aria-hidden", "true");
+  const duration = el("span", "t-dur", fmtDur((it.duration_ms || 0) / 1000));
+  duration.setAttribute("aria-label", "Duração: " + duration.textContent);
+  const format = el("span", "t-format", d.quality ? QUALITY_LABEL[d.quality] || d.quality : "—");
+  format.classList.toggle("is-empty", !d.quality);
+  format.setAttribute("aria-label", d.quality ? "Formato: " + format.textContent : "Formato disponível após iniciar o download");
+  let label = "Em análise";
+  if (it.skipped) label = "Pulada";
+  else if (downloading) label = DL_LABEL[d.state] || d.state;
+  else if (m?.status === "MATCHED") label = "Encontrada";
+  else if (m?.status === "AMBIGUOUS") label = canChoose ? "Escolher versão" : "Sem escolha";
+  else if (m?.status === "NOT_FOUND") label = "Não encontrada";
+  const status = el("span", "track-status", label);
+  if (label === "Encontrada" || label === "Não encontrada") {
+    const found = label === "Encontrada";
+    status.textContent = "";
+    status.title = label;
+    status.classList.add("has-symbol");
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    icon.setAttribute("viewBox", "0 0 20 20");
+    icon.setAttribute("aria-hidden", "true");
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", found ? "M4 10l4 4 8-8" : "M6 6l8 8m0-8-8 8");
+    icon.append(path);
+    status.append(icon, el("span", "visually-hidden", label));
   }
-
-  if (canChoose && m && m.status === "AMBIGUOUS") li.append(choices(it));
-
-  const d = it.download;
-  if (d && d.state && d.state !== "pending" && phase !== "ready") li.append(dlLine(d));
+  status.classList.toggle("is-active", !it.skipped && (d.state === "downloading" || (canChoose && m?.status === "AMBIGUOUS")));
+  status.classList.toggle("is-error", !it.skipped && d.state === "failed");
+  status.classList.toggle("is-success", !it.skipped && (downloading ? d.state === "done" : m?.status === "MATCHED"));
+  status.classList.toggle("is-warning", !it.skipped && !downloading && m?.status === "NOT_FOUND");
+  li.append(number, main, duration, format, status);
+  if (m?.deezer && !it.skipped) {
+    const details = el("details", "match-details");
+    details.append(el("summary", null, "Versão no Deezer"), destLine(m.deezer));
+    li.append(details);
+  }
+  if (canChoose && m?.status === "AMBIGUOUS") li.append(choices(it));
+  if (downloading && (d.state === "downloading" || d.error)) li.append(dlLine(d));
   return li;
 }
 
@@ -297,7 +335,6 @@ function choices(it) {
 
 function dlLine(d) {
   const box = el("div", "dl");
-  box.append(el("span", `dl-state s-${d.state}`, DL_LABEL[d.state] || d.state));
   if (d.state === "downloading") {
     const bar = el("span", "dl-bar");
     const fill = el("span");
@@ -305,7 +342,6 @@ function dlLine(d) {
     bar.append(fill);
     box.append(bar, el("span", "d-dur", `${Math.round(d.progress || 0)}%`));
   }
-  if (d.quality) box.append(el("span", "dl-q", QUALITY_LABEL[d.quality] || d.quality));
   if (d.error) box.append(el("span", "dl-err", d.error));
   return box;
 }
@@ -316,8 +352,11 @@ function renderDock(job) {
   const downloadable = (job.items || []).some((it) => !it.skipped && it.match && it.match.status === "MATCHED");
   const dl = $("download");
   dl.hidden = !(phase === "ready" || phase === "analyzing");
-  dl.disabled = phase !== "ready" || !downloadable;
+  dl.disabled = state.busy || phase !== "ready" || !downloadable;
+  $("cancel").disabled = state.busy;
   $("cancel").hidden = !(phase === "downloading" || phase === "packaging");
+  $("reset").disabled = state.busy;
+  $("reset").hidden = phase === "downloading" || phase === "packaging";
   const file = $("file");
   if (job.download_url) {
     file.href = job.download_url;
@@ -334,6 +373,10 @@ function renderDock(job) {
     tally = `${t.done || 0} concluídas, ${t.failed || 0} falhas, ${t.cancelled || 0} canceladas`;
     if (t.queued || t.downloading) tally += `, ${(t.queued || 0) + (t.downloading || 0)} faltando`;
   }
+  if (phase === "ready") tally = "Confira as versões antes de baixar.";
+  else if (phase === "analyzing") tally = "Buscando correspondências no Deezer.";
+  else if (phase === "cancelled") tally = "Cole o link novamente para tentar de novo.";
+  else if (phase === "error") tally = "Confira o erro abaixo e tente novamente.";
   $("tally").textContent = tally;
 
   const warn = $("quality-warn");
@@ -345,46 +388,6 @@ function renderDock(job) {
   } else {
     warn.hidden = true;
   }
-}
-
-/* ---------------- cores da capa ---------------- */
-
-function resetTint() {
-  for (const k of ["--c1", "--c2", "--c3", "--c4"]) document.documentElement.style.removeProperty(k);
-}
-
-// Lê a capa num canvas 24×24 e pega as 3–4 cores saturadas mais frequentes.
-// Só tinge a moldura (anéis, centro do disco); texto nunca usa essas cores.
-function tintFrom(img) {
-  let data;
-  try {
-    const cv = document.createElement("canvas");
-    cv.width = cv.height = 24;
-    const cx = cv.getContext("2d", { willReadFrequently: true });
-    cx.drawImage(img, 0, 0, 24, 24);
-    data = cx.getImageData(0, 0, 24, 24).data;
-  } catch {
-    resetTint(); // CORS bloqueou a leitura: fica a paleta da casa
-    return;
-  }
-  const buckets = new Map();
-  for (let i = 0; i < data.length; i += 4) {
-    const [r, g, b] = [data[i], data[i + 1], data[i + 2]];
-    const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
-    const sat = mx ? (mx - mn) / mx : 0;
-    if (sat < 0.3 || mx < 60) continue; // ignora cinzas e quase-pretos
-    const k = ((r >> 5) << 6) | ((g >> 5) << 3) | (b >> 5);
-    const e = buckets.get(k) || { n: 0, r: 0, g: 0, b: 0 };
-    e.n++; e.r += r; e.g += g; e.b += b;
-    buckets.set(k, e);
-  }
-  const top = [...buckets.values()].sort((a, b) => b.n - a.n).slice(0, 4)
-    .map((e) => `rgb(${Math.round(e.r / e.n)} ${Math.round(e.g / e.n)} ${Math.round(e.b / e.n)})`);
-  if (top.length < 2) { resetTint(); return; }
-  const root = document.documentElement.style;
-  ["--c1", "--c2", "--c3", "--c4"].forEach((k, i) => {
-    if (top[i]) root.setProperty(k, top[i]); else root.removeProperty(k);
-  });
 }
 
 /* ---------------- ações ---------------- */
@@ -402,16 +405,30 @@ $("seek").addEventListener("submit", async (ev) => {
   const url = $("url").value.trim();
   if (!url) {
     showError($("form-error"), "Cole um link do Spotify antes de analisar.");
+    $("url").setAttribute("aria-invalid", "true");
     $("url").focus();
     return;
   }
-  state.lastStatus.clear();
+  $("url").removeAttribute("aria-invalid");
   const ok = await act("POST", "/api/analyze", { url }, $("analyze"));
   if (!ok) $("url").focus();
 });
 
 $("download").addEventListener("click", (ev) => act("POST", "/api/job/download", {}, ev.currentTarget));
 $("cancel").addEventListener("click", (ev) => act("POST", "/api/job/cancel", {}, ev.currentTarget));
+// Limpar: esquece o job no servidor e volta para a tela inicial.
+$("reset").addEventListener("click", async (ev) => {
+  if (!(await act("DELETE", "/api/job", {}, ev.currentTarget))) return;
+  $("url").value = "";
+  $("url").removeAttribute("aria-invalid");
+  $("url").focus();
+});
+
+$("logout").addEventListener("click", async (ev) => {
+  ev.currentTarget.disabled = true;
+  try { await api("POST", "/api/logout"); } catch { /* sem sessão dá no mesmo */ }
+  location.replace("/login.html");
+});
 
 /* ---------------- ajustes ---------------- */
 
@@ -421,21 +438,10 @@ function renderMe() {
   const who = $("who");
   who.textContent = me.user;
   who.hidden = !me.user;
+  who.title = "Perfil: " + (me.user || "");
+  $("logout").hidden = !me.user;
+  $("settings-preview").textContent = QUALITY_LABEL[me.quality] || me.quality;
   for (const r of document.querySelectorAll('input[name="quality"]')) r.checked = r.value === me.quality;
-
-  const conc = $("conc");
-  const max = Math.max(1, me.max_concurrency || 3);
-  if (conc.querySelectorAll("input").length !== max) {
-    conc.querySelectorAll("label").forEach((n) => n.remove());
-    for (let i = 1; i <= max; i++) {
-      const lab = el("label");
-      const inp = el("input");
-      inp.type = "radio"; inp.name = "concurrency"; inp.value = String(i);
-      lab.append(inp, el("span", null, String(i)));
-      conc.append(lab);
-    }
-  }
-  for (const r of conc.querySelectorAll("input")) r.checked = Number(r.value) === me.concurrency;
 
   let arlText;
   if (me.own_arl) arlText = "Usando seu ARL.";
@@ -446,36 +452,140 @@ function renderMe() {
   if (state.job) renderDock(state.job);
 }
 
-async function saveMe(patch, msg, button) {
-  if (button) button.disabled = true;
+async function saveMe(patch, msg) {
+  if ($("settings").getAttribute("aria-busy") === "true") return false;
+  $("settings").setAttribute("aria-busy", "true");
+  $("settings-msg").classList.remove("is-error");
+  $("settings-msg").textContent = "Salvando…";
+  const controls = [...$("settings").querySelectorAll("input, button")];
+  controls.forEach((control) => { control.disabled = true; });
   try {
     state.me = await api("PUT", "/api/me", patch);
     $("settings-msg").textContent = msg;
     renderMe();
     return true;
   } catch (e) {
+    $("settings-msg").classList.add("is-error");
     $("settings-msg").textContent = e.message;
     renderMe();
     return false;
   } finally {
-    if (button) button.disabled = false;
+    controls.forEach((control) => { control.disabled = false; });
+    $("settings").removeAttribute("aria-busy");
   }
 }
 
 $("settings").addEventListener("change", (ev) => {
   const t = ev.target;
   if (t.name === "quality") saveMe({ quality: t.value }, `Qualidade salva: ${QUALITY_LABEL[t.value]}.`);
-  if (t.name === "concurrency") saveMe({ concurrency: Number(t.value) }, `Até ${t.value} downloads ao mesmo tempo.`);
 });
 
 $("arl-save").addEventListener("click", async (ev) => {
   const inp = $("arl");
   const v = inp.value.trim();
   if (!v) { $("settings-msg").textContent = "Cole o ARL no campo antes de salvar."; inp.focus(); return; }
-  if (await saveMe({ arl: v }, "ARL salvo.", ev.currentTarget)) inp.value = "";
+  if (await saveMe({ arl: v }, "ARL salvo.")) inp.value = "";
 });
 $("arl-remove").addEventListener("click", (ev) =>
-  saveMe({ arl: null }, "ARL removido. Voltando ao ARL padrão.", ev.currentTarget));
+  saveMe({ arl: null }, "ARL removido. Voltando ao ARL padrão."));
+
+/* ---------------- histórico (de todos os usuários) ---------------- */
+
+async function loadHistory(forJob) {
+  state.historyFor = forJob || "boot";
+  let items;
+  try {
+    items = (await api("GET", "/api/history")).items || [];
+  } catch {
+    return; // enfeite: se falhar, a seção só não aparece
+  }
+  items = items.slice(0, HISTORY_SHOWN);
+  $("history-list").replaceChildren(...items.map(historyItem));
+  $("history-empty").hidden = items.length > 0;
+  // The badge counts what other people downloaded since this browser last opened the drawer.
+  let seen = 0;
+  try {
+    if ($("history").classList.contains("is-open") && items.length) localStorage.setItem(HISTORY_SEEN_KEY, items[0].at);
+    seen = Number(localStorage.getItem(HISTORY_SEEN_KEY)) || 0;
+  } catch { /* sem storage: o contador só não zera */ }
+  const fresh = items.filter((h) => h.at > seen && h.user !== state.me?.user).length;
+  $("history-badge").textContent = fresh > 9 ? "9+" : fresh;
+  $("history-badge").hidden = fresh === 0 || $("history").classList.contains("is-open");
+  $("history-open").setAttribute("aria-label", "Baixados recentemente" + (fresh ? `, ${fresh} novos` : ""));
+}
+
+function setDrawer(open) {
+  const drawer = $("history"), toggle = $("history-open");
+  if (drawer.classList.contains("is-open") === open) return;
+  drawer.classList.toggle("is-open", open);
+  drawer.inert = !open;
+  toggle.setAttribute("aria-expanded", String(open));
+  if (open) {
+    $("history-badge").hidden = true;
+    $("history-close").focus();
+    loadHistory(state.historyFor);
+  } else if (drawer.contains(document.activeElement)) {
+    toggle.focus();
+  }
+}
+
+$("history-open").addEventListener("click", () => setDrawer(!$("history").classList.contains("is-open")));
+$("history-close").addEventListener("click", () => setDrawer(false));document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") setDrawer(false); });
+document.addEventListener("click", (ev) => {
+  if (!$("history").contains(ev.target) && !$("history-open").contains(ev.target)) setDrawer(false);
+});
+
+function fmtAgo(at) {
+  if (!at) return "";
+  const min = Math.floor((Date.now() / 1000 - at) / 60);
+  if (min < 1) return "agora";
+  if (min < 60) return `há ${min} min`;
+  if (min < 60 * 24) return `há ${Math.floor(min / 60)} h`;
+  if (min < 60 * 24 * 30) return `há ${Math.floor(min / 60 / 24)} d`;
+  return new Date(at * 1000).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit" });
+}
+
+function historyItem(h) {
+  const li = el("li");
+  const b = el("button", "history-item");
+  b.type = "button";
+  const frame = el("span", "history-cover");
+  frame.append(el("span", "cover-placeholder", "♫"));
+  if (h.cover_url) {
+    const img = el("img");
+    img.alt = "";
+    img.loading = "lazy";
+    img.decoding = "async";
+    img.onerror = () => img.remove();
+    img.src = h.cover_url;
+    frame.append(img);
+  }
+  const title = h.title || "Sem título";
+  const main = el("span", "history-main");
+  main.append(el("span", "history-title", title),
+    el("span", "history-sub", [KIND_LABEL[h.kind] || h.kind, h.subtitle].filter(Boolean).join(" · ")));
+  const meta = el("span", "history-meta");
+  if (h.quality) meta.append(el("span", "t-format", QUALITY_LABEL[h.quality] || h.quality));
+  const when = el("span", "history-when");
+  when.append(el("span", "history-user", h.user || ""), el("span", null, fmtAgo(h.at)));
+  meta.append(when);
+  b.append(frame, main, meta);
+  b.title = "Usar este link";
+  b.setAttribute("aria-label",
+    `${[title, h.subtitle].filter(Boolean).join(", ")}. Baixado por ${h.user}, ${fmtAgo(h.at)}. Usar este link.`);
+  b.addEventListener("click", () => {
+    const url = $("url");
+    if (!h.url || url.disabled) return;
+    url.value = h.url;
+    url.removeAttribute("aria-invalid");
+    showError($("form-error"), "");
+    setDrawer(false);
+    $("seek").scrollIntoView({ block: "start" });
+    url.focus({ preventScroll: true });
+  });
+  li.append(b);
+  return li;
+}
 
 /* ---------------- início ---------------- */
 
@@ -488,6 +598,7 @@ async function boot() {
   }
   await refresh();
   if (!state.job) render();
+  if (!state.historyFor) loadHistory();
 }
 
 /* ---------------- mock (só com ?mock) ---------------- */
@@ -557,6 +668,7 @@ async function mockApi(method, path, body) {
     }
     return structuredClone(mock.me);
   }
+  if (path === "/api/history") return loadMock("history");
   if (path === "/api/analyze") {
     if (job && ["downloading", "packaging"].includes(job.phase)) fail(409, "Já existe um download em andamento. Cancele ou espere terminar.");
     if (!/spotify/.test(body.url || "")) fail(400, "Esse link não parece ser do Spotify. Use um link de música, álbum ou playlist.");
@@ -565,6 +677,7 @@ async function mockApi(method, path, body) {
     return { job_id: mock.job.job_id };
   }
   if (path === "/api/job") {
+    if (method === "DELETE") { mock.job = null; mock.pending = null; return null; }
     if (!job) return null;
     if (mock.pending) { mock.job = await loadMock(`job-${mock.pending}`); mock.pending = null; return structuredClone(mock.job); }
     if (ACTIVE.has(job.phase)) mockTick(job);

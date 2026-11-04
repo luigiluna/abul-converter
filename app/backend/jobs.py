@@ -18,6 +18,7 @@ from pathlib import Path
 
 from app.backend.downloads.adapter import AuthError, DeezloadAdapter, ItemUpdate
 from app.backend.downloads.layout import collection_dir, plan_downloads, safe_name, write_m3u8
+from app.backend.history import History
 from app.backend.matching.cache import MatchCache
 from app.backend.matching.collection import match_collection
 from app.backend.matching.matcher import DeezerMatcher
@@ -80,8 +81,10 @@ def _deezer(t: DeezerTrack) -> dict:
 
 class JobManager:
     def __init__(self, settings: Settings, users: UserStore, adapter: DeezloadAdapter,
-                 resolver: SpotifyResolver, matcher: DeezerMatcher, cache: MatchCache):
+                 resolver: SpotifyResolver, matcher: DeezerMatcher, cache: MatchCache,
+                 history: History | None = None):
         self.settings = settings
+        self.history = history or History(Path(settings.data_dir) / "history.json")
         self.users = users
         self.adapter = adapter
         self.resolver = resolver
@@ -149,7 +152,8 @@ class JobManager:
             raise DiskFull(f"Pouco espaço livre no servidor ({free_gb:.1f} GB). Tente mais tarde.")
         prefs = self.users.get(user)
         own = self.users.has_own_arl(user)
-        concurrency = min(prefs.concurrency, self.settings.max_user_concurrency)
+        # Fixed by the server (not a user choice): tuned once for the VM in .env.
+        concurrency = self.settings.max_user_concurrency
 
         with self._lock:
             if self._jobs.get(user) is not job or job.phase != "ready":
@@ -171,6 +175,18 @@ class JobManager:
             # A running download ends as "cancelled" from its own thread.
             if job.phase in ("analyzing", "ready"):
                 job.phase = "cancelled"
+
+    def discard(self, user: str) -> None:
+        """Forget the user's job and its files (the "Limpar" button). No job is fine."""
+        with self._lock:
+            job = self._jobs.get(user)
+            if not job:
+                return
+            if job.phase in BUSY_PHASES:
+                raise Busy("Há um download em andamento. Cancele antes de limpar.")
+            del self._jobs[user]
+        job.cancel.set()
+        shutil.rmtree(job.dir, ignore_errors=True)
 
     # --- reads ---------------------------------------------------------------
 
@@ -217,6 +233,7 @@ class JobManager:
     # --- worker threads ------------------------------------------------------
 
     def _analyze(self, job: Job, uri: str) -> None:
+        started = time.monotonic()
         try:
             collection = self.resolver.resolve(uri)
             with self._lock:
@@ -235,6 +252,9 @@ class JobManager:
                 job.analysis_done = len(results)
                 if job.phase == "analyzing":
                     job.phase = "ready"
+            matched = sum(r.status is MatchStatus.MATCHED for r in results)
+            log.info("job %s (%s): analysed %s %r, %d/%d matched in %.0fs", job.id, job.owner,
+                     collection.kind, collection.title, matched, len(results), time.monotonic() - started)
         except SpotifyError as e:
             self._fail(job, str(e))
         except Exception:
@@ -246,6 +266,9 @@ class JobManager:
         which = "seu ARL próprio" if own else "o ARL padrão do servidor"
         indices = [i for i, _ in planned]
         paths: list[str | None] = [None] * len(job.downloads)
+        started = time.monotonic()
+        log.info("job %s (%s): downloading %d tracks, %s, %d at a time",
+                 job.id, job.owner, len(planned), quality, concurrency)
 
         def on_update(u: ItemUpdate) -> None:
             i = indices[u.index]
@@ -269,6 +292,7 @@ class JobManager:
                 shutil.rmtree(job.dir / "files", ignore_errors=True)
                 with self._lock:
                     job.phase = "cancelled"
+                log.info("job %s (%s): cancelled after %.0fs", job.id, job.owner, time.monotonic() - started)
                 return
             with self._lock:
                 job.phase = "packaging"
@@ -277,10 +301,24 @@ class JobManager:
             if not done:
                 self._fail(job, "Nenhuma track foi baixada.")
                 return
-            file = Path(done[0]) if len(done) == 1 else self._zip(job)
+            if len(done) == 1:
+                file = Path(done[0])
+            else:
+                file = self._zip(job)
+                # Only the zip is served, so the loose tracks would just double the disk use until the TTL.
+                shutil.rmtree(job.dir / "files", ignore_errors=True)
+            try:
+                with self._lock:
+                    got = [d["quality"] for d in job.downloads if d["state"] == "done" and d["quality"]]
+                # The format most of the tracks really came in (a job can mix FLAC and MP3).
+                self.history.add(job.owner, job.collection, max(set(got), key=got.count) if got else None)
+            except Exception:  # the shared list is a nicety; never lose a finished download over it
+                log.exception("could not record job %s in the history", job.id)
             with self._lock:
                 job.file = file
                 job.phase = "done"
+            log.info("job %s (%s): done, %d/%d tracks, %.0f MB in %.0fs", job.id, job.owner, len(done),
+                     len(planned), file.stat().st_size / 1e6, time.monotonic() - started)
         except AuthError:
             self._fail(job, f"ARL inválido ou expirado ({which}).")
         except Exception:
@@ -301,6 +339,7 @@ class JobManager:
         with self._lock:
             job.phase = "error"
             job.error = message
+        log.warning("job %s (%s): %s", job.id, job.owner, message)
 
     # --- helpers (caller holds the lock) --------------------------------------
 

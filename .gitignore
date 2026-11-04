@@ -7,6 +7,11 @@ __pycache__/
 /downloads/
 /data/
 .env
+.env.*
+!.env.example
 
 # Caddyfile real (hashes de senha dos usuários); o versionado é deploy/Caddyfile.example
 /deploy/Caddyfile
+
+# perfil do navegador usado nos testes de UI (cookies/sessões)
+.ui-browser/

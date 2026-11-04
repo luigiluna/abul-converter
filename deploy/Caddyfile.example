@@ -1,37 +1,20 @@
-# Copie para deploy/Caddyfile (nunca commite o real: ele lista os usuários).
+# Copie para deploy/Caddyfile. O Caddy só faz HTTPS; o login é do app (docs/ARCHITECTURE.md §7.1).
 #
-# Adicionar um usuário:
-#   docker compose exec caddy caddy hash-password --plaintext 'a-senha'
-#   cole "<nome> <hash>" no basic_auth abaixo (nome: minúsculas, dígitos, _ ou -, até 32;
-#   vira o usuário no app) e rode:
-#   docker compose exec -w /etc/caddy caddy caddy reload
+# Criar um usuário ou trocar a senha (nome: minúsculas, dígitos, _ ou -, até 32):
+#   docker compose exec -u app app python -m app.passwd <nome>
+#
+# Depois de editar este arquivo: docker compose exec -w /etc/caddy caddy caddy reload
 #
 # Troque o domínio pelo seu (ex.: subdomínio DuckDNS apontando para o IP público da VM).
 # Com as portas 80 e 443 liberadas, o Caddy emite o certificado HTTPS sozinho.
 
 musica.seudominio.duckdns.org {
-	basic_auth {
-		voce $2a$14$TROQUE_PELO_HASH_DO_caddy_hash-password
-		# amigo $2a$14$...
-	}
-
-	# Descarta qualquer X-Remote-User vindo do cliente; só o definido abaixo chega ao app.
-	request_header -X-Remote-User
-
-	reverse_proxy app:8000 {
-		header_up X-Remote-User {http.auth.user.id}
-	}
+	reverse_proxy app:8000
 }
 
-# Teste local sem domínio (HTTP puro na porta 80): comente o bloco acima, use este
-# e teste com: curl -u voce:a-senha http://localhost/
+# Teste local sem domínio (HTTP puro na porta 80): comente o bloco acima e use este.
+# O cookie de sessão é "Secure" em APP_ENV=prod, então o login só funciona com APP_ENV=dev.
 #
 # :80 {
-# 	basic_auth {
-# 		voce $2a$14$...
-# 	}
-# 	request_header -X-Remote-User
-# 	reverse_proxy app:8000 {
-# 		header_up X-Remote-User {http.auth.user.id}
-# 	}
+# 	reverse_proxy app:8000
 # }

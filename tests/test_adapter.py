@@ -186,3 +186,18 @@ def test_actual_quality_reads_mp3_bitrate(monkeypatch):
     assert adapter_mod.actual_quality("a.mp3") == "MP3_320"
     Info.bitrate = 128_000
     assert adapter_mod.actual_quality("a.mp3") == "MP3_128"
+
+
+def test_idle_login_is_redone(fake):
+    now = [0.0]
+    a = DeezloadAdapter(clock=lambda: now[0])
+    run(a, ["1"], "FLAC")
+    now[0] += adapter_mod.SESSION_IDLE_SECONDS - 1  # still fresh, and this use resets the timer
+    run(a, ["1"], "FLAC")
+    now[0] += adapter_mod.SESSION_IDLE_SECONDS - 1
+    run(a, ["1"], "FLAC")
+    assert len(fake.instances) == 2  # one FLAC + one MP3_128 (plan check), reused
+    now[0] += adapter_mod.SESSION_IDLE_SECONDS + 1  # idle too long: log in again
+    out, _ = run(a, ["1"], "FLAC")
+    assert out[0].state == "done"
+    assert sorted(d.quality.value for d in fake.instances) == ["FLAC", "FLAC", "MP3_128", "MP3_128"]

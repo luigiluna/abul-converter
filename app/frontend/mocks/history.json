@@ -1,0 +1,10 @@
+{
+  "items": [
+    {"user": "luidi", "kind": "album", "title": "Global Warming", "subtitle": "Pitbull", "cover_url": "mocks/cover.svg", "url": "https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy", "quality": "FLAC", "at": 1759500000},
+    {"user": "bia", "kind": "playlist", "title": "Domingo de manhã com um título bem comprido para testar o corte em duas linhas e ainda sobrar texto", "subtitle": "bia", "cover_url": "mocks/cover.svg", "url": "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M", "quality": "MP3_320", "at": 1759490000},
+    {"user": "ana", "kind": "track", "title": "<script>alert(1)</script>", "subtitle": "Teste de XSS", "cover_url": null, "url": "https://open.spotify.com/track/11dFghVXANMlKmJXsNCbNl", "quality": null, "at": 1759480000},
+    {"user": "luidi", "kind": "album", "title": "Clube da Esquina", "subtitle": "Milton Nascimento, Lô Borges", "cover_url": "mocks/nao-existe.jpg", "url": "https://open.spotify.com/album/6rNWxVyiQqm7bIzEHGNMRO", "quality": "FLAC", "at": 1759470000},
+    {"user": "nome-de-usuario-bem-comprido_32", "kind": "album", "title": "Acabou Chorare", "subtitle": "Novos Baianos", "cover_url": "mocks/cover.svg", "url": "https://open.spotify.com/album/2hVVZ0R1Tgl2aV4AX9wHc9", "quality": "MP3_128", "at": 1759460000},
+    {"user": "bia", "kind": "album", "title": "Expresso 2222", "subtitle": "Gilberto Gil", "cover_url": "mocks/cover.svg", "url": "https://open.spotify.com/album/0000000000000000000000", "quality": "FLAC", "at": 1759450000}
+  ]
+}
