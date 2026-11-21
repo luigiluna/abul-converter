@@ -1,6 +1,6 @@
 # Spotify → Deezer: Arquitetura
 
-> Status: revisão 2, aprovada. PoC local (resolver, matcher, adapter) implementada e validada com download real em 2026-10-02. Próximas etapas e contratos: [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
+> Status: revisão 2, aprovada. PoC local (resolver, matcher, adapter) implementada e validada com download real em 2026-10-02.
 > Pesquisa feita em 2026-10-02 contra `Lunatic16/deezload@0cb3919` e `bambanah/deemix@9e572a4`.
 
 ---
@@ -188,7 +188,7 @@ class TrackCandidate:
 
 ### 4.2 API HTTP
 
-Resumo abaixo; **o contrato detalhado (corpos, erros, schema do snapshot) está em [IMPLEMENTATION_PLAN.md §4](IMPLEMENTATION_PLAN.md) e prevalece**.
+Resumo abaixo; o contrato detalhado está em `app/backend/api.py` e `tests/test_api.py`.
 
 Todas as rotas exigem o cookie de sessão (menos `POST /api/login`). Todo POST/PUT exige `X-Requested-With: spot2deez` (§7).
 
@@ -283,7 +283,7 @@ Não há `downloadAlbum` nem `downloadPlaylist` no adapter. Ao contrário do sug
    - senão → **NOT_FOUND**
 5. O resultado vai para o cache por `spotify_id`. Escolhas manuais **também** vão para o cache e têm prioridade.
 
-Os limiares são calibrados com um conjunto de testes fixo ([IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md), etapa 8b), não no chute.
+Os limiares são calibrados com um conjunto de testes fixo (`tests/test_matcher.py`), não no chute.
 
 ### 6.3 Match de álbum inteiro (só para URLs de álbum)
 
