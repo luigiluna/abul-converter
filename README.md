@@ -1,9 +1,11 @@
-# spot2deez
+# Abul Converter
 
 **Paste a Spotify link. Get files good enough to mix.**
 
+<sub>Formerly spot2deez, which is still the name you will see inside the app.</sub>
+
 <p align="center">
-  <img src="docs/img/main-screen.png" width="720" alt="spot2deez after analyzing an album">
+  <img src="docs/img/main-screen.png" width="720" alt="Abul Converter after analyzing an album">
 </p>
 
 ---
@@ -21,7 +23,7 @@ the gig is "Saturday night, at home, nobody asked".
 Meanwhile all my music discovery already lives in Spotify playlists, and Spotify will
 happily stream you anything but will never hand you a file.
 
-Deezer, on the other hand, serves lossless audio. So spot2deez is the bridge: paste a
+Deezer, on the other hand, serves lossless audio. So Abul Converter is the bridge: paste a
 Spotify link, it finds the same songs on Deezer, lets you check what it is unsure about,
 and downloads properly tagged FLACs, ready to drop into the DJ software.
 
@@ -82,8 +84,8 @@ Stack: **FastAPI** on the back, **plain HTML + JS** on the front (no framework, 
 ### Local, for tinkering
 
 ```bash
-git clone --recursive https://github.com/luigiluna/spot2deez
-cd spot2deez
+git clone --recursive https://github.com/luigiluna/abul-converter
+cd abul-converter
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
@@ -97,8 +99,8 @@ python -m app.backend.main
 ### On a server
 
 ```bash
-git clone --recursive https://github.com/luigiluna/spot2deez
-cd spot2deez
+git clone --recursive https://github.com/luigiluna/abul-converter
+cd abul-converter
 
 cp .env.example .env                           # fill DEFAULT_ARL and APP_SECRET_KEY
 chmod 600 .env
