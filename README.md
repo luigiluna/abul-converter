@@ -2,8 +2,9 @@
 
 **Paste a Spotify link. Get files good enough to mix.**
 
-<!-- TODO screenshot: main screen (desktop, dark) -->
-<p align="center"><i>[ screenshot: main screen (desktop, dark) ]</i></p>
+<p align="center">
+  <img src="docs/img/main-screen.png" width="720" alt="spot2deez after analyzing an album">
+</p>
 
 ---
 
@@ -42,8 +43,9 @@ was built for, and it is on purpose.
   uses the owner's Deezer account by default, and can plug in their own if they want.
 - **Cleans up after itself.** Files are deleted after a few hours. It is a pipe, not a library.
 
-<!-- TODO screenshot: match review screen showing ambiguous tracks -->
-<p align="center"><i>[ screenshot: match review screen showing ambiguous tracks ]</i></p>
+<p align="center">
+  <img src="docs/img/match-review.png" width="720" alt="Picking the right version of an ambiguous track">
+</p>
 
 ## How it works
 
